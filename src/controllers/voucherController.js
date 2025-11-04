@@ -2,6 +2,27 @@ const supabase = require("../config/supabase");
 const { validationResult } = require("express-validator");
 
 const voucherController = {
+  getUserVouchers: async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const { data, error } = await supabase
+        .from("user_vouchers")
+        .select(
+          `
+          id,
+          is_used,
+          vouchers (*)
+        `
+        )
+        .eq("user_id", userId);
+
+      if (error) throw error;
+      res.json(data);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  },
+
   getVouchers: async (req, res) => {
     try {
       const { data, error } = await supabase
@@ -30,155 +51,6 @@ const voucherController = {
       if (error) throw error;
       if (!data) return res.status(404).json({ error: "Voucher not found" });
       res.json(data);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-
-  createVoucher: async (req, res) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-
-      const {
-        code,
-        name,
-        description,
-        type,
-        value,
-        min_order_value,
-        max_discount_amount,
-        usage_limit,
-        usage_limit_per_user,
-        valid_from,
-        valid_to,
-      } = req.body;
-
-      const { data, error } = await supabase
-        .from("vouchers")
-        .insert([
-          {
-            code,
-            name,
-            description,
-            type,
-            value,
-            min_order_value,
-            max_discount_amount,
-            usage_limit,
-            usage_limit_per_user,
-            valid_from,
-            valid_to,
-            is_active: true,
-          },
-        ])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Log audit action
-      await supabase.from("audit_logs").insert([
-        {
-          table_name: "vouchers",
-          record_id: data.id,
-          action: "INSERT",
-          new_values: data,
-          user_id: req.user.id,
-          ip_address: req.ip,
-          user_agent: req.get("User-Agent"),
-        },
-      ]);
-
-      res.status(201).json(data);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-
-  updateVoucher: async (req, res) => {
-    try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        return res.status(400).json({ errors: errors.array() });
-      }
-
-      const { id } = req.params;
-      const { data: oldData, error: fetchError } = await supabase
-        .from("vouchers")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (fetchError) throw fetchError;
-      if (!oldData) return res.status(404).json({ error: "Voucher not found" });
-
-      const { data, error } = await supabase
-        .from("vouchers")
-        .update({ ...req.body, updated_at: new Date() })
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Log audit action
-      await supabase.from("audit_logs").insert([
-        {
-          table_name: "vouchers",
-          record_id: id,
-          action: "UPDATE",
-          old_values: oldData,
-          new_values: data,
-          user_id: req.user.id,
-          ip_address: req.ip,
-          user_agent: req.get("User-Agent"),
-        },
-      ]);
-
-      res.json(data);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-
-  deleteVoucher: async (req, res) => {
-    try {
-      const { id } = req.params;
-      const { data: oldData, error: fetchError } = await supabase
-        .from("vouchers")
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (fetchError) throw fetchError;
-      if (!oldData) return res.status(404).json({ error: "Voucher not found" });
-
-      const { data, error } = await supabase
-        .from("vouchers")
-        .update({ is_active: false })
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      // Log audit action
-      await supabase.from("audit_logs").insert([
-        {
-          table_name: "vouchers",
-          record_id: id,
-          action: "DELETE",
-          old_values: oldData,
-          user_id: req.user.id,
-          ip_address: req.ip,
-          user_agent: req.get("User-Agent"),
-        },
-      ]);
-
-      res.json({ message: "Voucher deleted successfully" });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -359,11 +231,9 @@ const voucherController = {
 
       // Check minimum order value
       if (voucher.min_order_value && order.subtotal < voucher.min_order_value) {
-        return res
-          .status(400)
-          .json({
-            error: `Order subtotal must be at least ${voucher.min_order_value}`,
-          });
+        return res.status(400).json({
+          error: `Order subtotal must be at least ${voucher.min_order_value}`,
+        });
       }
 
       // Calculate discount

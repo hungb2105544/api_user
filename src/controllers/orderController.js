@@ -9,12 +9,16 @@ const orderController = {
         .select(
           `
           *,
-          order_items (
-            *,
-            products (name, image_urls),
-            product_variants (color, sku, size: sizes (size_name))
+          shipping_info: user_addresses (
+            name: addresses (receiver_name),
+            phone: addresses (receiver_phone),
+            address: addresses (street, ward, district, province)
           ),
-          user_addresses (addresses (*))
+          items: order_items (
+            *,
+            product: products (name, image_urls),
+            variant: product_variants (color, size: sizes (size_name))
+          )
         `
         )
         .eq("user_id", userId);
@@ -29,17 +33,22 @@ const orderController = {
   createOrder: async (req, res) => {
     try {
       const userId = req.user.id;
-      const { user_address_id, payment_method, cart_id, voucher_code } =
-        req.body;
+      const {
+        user_address_id,
+        payment_method,
+        cart_id,
+        voucher_code,
+        shipping_fee,
+      } = req.body;
 
       // Get cart items
       const { data: cartItems, error: cartError } = await supabase
         .from("cart_items")
         .select(
           `
-          *,
-          products (price: product_price_history (price, effective_date, end_date)),
-          product_variants (additional_price)
+          quantity, product_id, variant_id,
+          unit_price: price,
+          product_variants (additional_price) 
         `
         )
         .eq("cart_id", cart_id);
@@ -51,18 +60,14 @@ const orderController = {
       // Calculate subtotal
       let subtotal = 0;
       const orderItems = cartItems.map((item) => {
-        const price = item.products.price.find(
-          (p) => !p.end_date || p.end_date > new Date()
-        ).price;
-        const total =
-          (price + (item.product_variants.additional_price || 0)) *
-          item.quantity;
+        // Frontend should send the final price per item in the cart
+        const total = item.unit_price * item.quantity;
         subtotal += total;
         return {
           product_id: item.product_id,
           variant_id: item.variant_id,
           quantity: item.quantity,
-          unit_price: price,
+          unit_price: item.unit_price,
           line_total: total,
         };
       });
@@ -70,7 +75,7 @@ const orderController = {
       // Initialize order data
       let discount_amount = 0;
       let voucher_id = null;
-      let total = subtotal;
+      let total = subtotal + (shipping_fee || 0);
 
       // Apply voucher if provided
       if (voucher_code) {
@@ -105,11 +110,9 @@ const orderController = {
 
         // Check minimum order value
         if (voucher.min_order_value && subtotal < voucher.min_order_value) {
-          return res
-            .status(400)
-            .json({
-              error: `Order subtotal must be at least ${voucher.min_order_value}`,
-            });
+          return res.status(400).json({
+            error: `Order subtotal must be at least ${voucher.min_order_value}`,
+          });
         }
 
         // Calculate discount
@@ -124,11 +127,11 @@ const orderController = {
         } else if (voucher.type === "fixed_amount") {
           discount_amount = voucher.value;
         } else if (voucher.type === "free_shipping") {
-          discount_amount = order.shipping_fee || 0; // Assuming shipping_fee is calculated elsewhere
+          discount_amount = shipping_fee || 0;
         }
 
         voucher_id = voucher.id;
-        total = subtotal - discount_amount;
+        total = subtotal + (shipping_fee || 0) - discount_amount;
 
         // Mark user voucher as used
         await supabase
@@ -152,7 +155,8 @@ const orderController = {
             user_address_id,
             subtotal,
             discount_amount,
-            total, // Add shipping_fee, tax_amount as needed
+            shipping_fee: shipping_fee || 0,
+            total,
             voucher_id,
             payment_method,
             status: "pending",
@@ -206,12 +210,16 @@ const orderController = {
         .select(
           `
           *,
-          order_items (
-            *,
-            products (name, image_urls),
-            product_variants (color, sku, size: sizes (size_name))
+          shipping_info: user_addresses (
+            name: addresses (receiver_name),
+            phone: addresses (receiver_phone),
+            address: addresses (street, ward, district, province)
           ),
-          user_addresses (addresses (*))
+          items: order_items (
+            *,
+            product: products (name, image_urls),
+            variant: product_variants (color, size: sizes (size_name))
+          )
         `
         )
         .eq("id", id)
@@ -220,34 +228,6 @@ const orderController = {
 
       if (error) throw error;
       if (!data) return res.status(404).json({ error: "Order not found" });
-      res.json(data);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  },
-
-  updateOrderStatus: async (req, res) => {
-    // Add role-based access control for admin
-    try {
-      const { id } = req.params;
-      const { status, comment } = req.body;
-      const changed_by = req.user.id;
-
-      const { data, error } = await supabase
-        .from("orders")
-        .update({ status })
-        .eq("id", id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      if (!data) return res.status(404).json({ error: "Order not found" });
-
-      // Log status change
-      await supabase
-        .from("order_status_history")
-        .insert([{ order_id: id, new_status: status, comment, changed_by }]);
-
       res.json(data);
     } catch (error) {
       res.status(500).json({ error: error.message });

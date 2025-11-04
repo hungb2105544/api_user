@@ -61,24 +61,4 @@ router.get("/rank", authMiddleware, userController.getRank);
 
 // Get user vouchers
 router.get("/vouchers", authMiddleware, userController.getVouchers);
-
-// Get user notifications
-router.get("/notifications", authMiddleware, userController.getNotifications);
-router.put(
-  "/notifications/:id/read",
-  authMiddleware,
-  userController.markNotificationRead
-);
-
-// Admin: List all users
-router.get("/", authMiddleware, adminMiddleware, userController.getAllUsers);
-
-// Admin: Update user role
-router.put(
-  "/:id/role",
-  authMiddleware,
-  adminMiddleware,
-  userController.updateUserRole
-);
-
 module.exports = router;
